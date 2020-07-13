@@ -13,7 +13,7 @@ pub fn main() !void {
     var outName = try args.next(alloc) orelse error.MissingOutputPath;
 
     const inFile = try std.fs.cwd().openFile(inName, .{});
-    var in = std.io.bufferedInStream(inFile.inStream());
+    var in = std.io.BufferedInStream(16 * 4096, @TypeOf(inFile.inStream())){ .unbuffered_in_stream = inFile.inStream() };
     var bits = std.io.bitInStream(.Little, in.inStream());
     const outFile = try std.fs.cwd().createFile(outName, .{});
     var out = BufferedOutStream(16 * 4096, @TypeOf(outFile.outStream())){ .unbuffered_out_stream = outFile.outStream() };
