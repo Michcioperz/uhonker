@@ -13,8 +13,10 @@ pub fn main() !void {
     var outName = try args.next(alloc) orelse error.MissingOutputPath;
 
     const inFile = try std.fs.cwd().openFile(inName, .{});
-    var in = std.io.BufferedInStream(16 * 4096, @TypeOf(inFile.inStream())){ .unbuffered_in_stream = inFile.inStream() };
-    var bits = std.io.bitInStream(.Little, in.inStream());
+    const inLen = try inFile.getEndPos();
+    const inBuf = try std.os.mmap(null, inLen, std.os.PROT_READ, std.os.MAP_PRIVATE, inFile.handle, 0);
+    defer std.os.munmap(inBuf);
+    var bits = std.io.bitInStream(.Little, std.io.fixedBufferStream(inBuf).inStream());
     const outFile = try std.fs.cwd().createFile(outName, .{});
     var out = std.io.bufferedOutStream(outFile.outStream());
     const outS = out.outStream();
