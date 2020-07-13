@@ -13,10 +13,10 @@ pub fn main() !void {
     var outName = try args.next(alloc) orelse error.MissingOutputPath;
 
     const inFile = try std.fs.cwd().openFile(inName, .{});
-    const in = std.io.bufferedInStream(inFile.inStream()).inStream();
-    var bits = std.io.bitInStream(.Little, in);
+    var in = std.io.bufferedInStream(inFile.inStream());
+    var bits = std.io.bitInStream(.Little, in.inStream());
     const outFile = try std.fs.cwd().createFile(outName, .{});
-    var out = BufferedOutStream(4096, @TypeOf(outFile.outStream())){ .unbuffered_out_stream = outFile.outStream() };
+    var out = BufferedOutStream(16 * 4096, @TypeOf(outFile.outStream())){ .unbuffered_out_stream = outFile.outStream() };
     const outS = out.outStream();
     const print = outS.print;
 
@@ -68,12 +68,15 @@ pub fn BufferedOutStream(comptime buffer_size: usize, comptime OutStreamType: ty
         const FifoType = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = buffer_size });
 
         pub fn flush(self: *Self) !void {
-            while (true) {
-                const slice = self.fifo.readableSlice(0);
-                if (slice.len == 0) break;
-                try self.unbuffered_out_stream.writeAll(slice);
-                self.fifo.discard(slice.len);
-            }
+            while (try self.flushOnce()) {}
+        }
+
+        fn flushOnce(self: *Self) !bool {
+            const slice = self.fifo.readableSlice(0);
+            if (slice.len == 0) return false;
+            try self.unbuffered_out_stream.writeAll(slice);
+            self.fifo.discard(slice.len);
+            return true;
         }
 
         pub fn outStream(self: *Self) OutStream {
@@ -81,12 +84,19 @@ pub fn BufferedOutStream(comptime buffer_size: usize, comptime OutStreamType: ty
         }
 
         pub fn write(self: *Self, bytes: []const u8) Error!usize {
-            if (bytes.len >= self.fifo.writableLength()) {
-                try self.flush();
-                return self.unbuffered_out_stream.write(bytes);
+            const first = self.fifo.writableLength();
+            if (first > 0) {
+                self.fifo.writeAssumeCapacity(bytes[0..std.math.min(first, bytes.len)]);
             }
-            self.fifo.writeAssumeCapacity(bytes);
-            return bytes.len;
+            if (bytes.len > first) {
+                if (try self.flushOnce()) {
+                    return self.write(bytes[first..bytes.len]);
+                } else {
+                    return self.unbuffered_out_stream.write(bytes[first..bytes.len]);
+                }
+            } else {
+                return bytes.len;
+            }
         }
     };
 }
