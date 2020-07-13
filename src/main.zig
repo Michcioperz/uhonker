@@ -16,7 +16,7 @@ pub fn main() !void {
     const in = std.io.bufferedInStream(inFile.inStream()).inStream();
     var bits = std.io.bitInStream(.Little, in);
     const outFile = try std.fs.cwd().createFile(outName, .{});
-    var out = std.io.bufferedOutStream(outFile.outStream());
+    var out = BufferedOutStream(4096, @TypeOf(outFile.outStream())){ .unbuffered_out_stream = outFile.outStream() };
     const outS = out.outStream();
     const print = outS.print;
 
@@ -53,4 +53,40 @@ pub fn main() !void {
         }
     }
     try out.flush();
+}
+
+pub fn BufferedOutStream(comptime buffer_size: usize, comptime OutStreamType: type) type {
+    const io = std.io;
+    return struct {
+        unbuffered_out_stream: OutStreamType,
+        fifo: FifoType = FifoType.init(),
+
+        pub const Error = OutStreamType.Error;
+        pub const OutStream = io.OutStream(*Self, Error, write);
+
+        const Self = @This();
+        const FifoType = std.fifo.LinearFifo(u8, std.fifo.LinearFifoBufferType{ .Static = buffer_size });
+
+        pub fn flush(self: *Self) !void {
+            while (true) {
+                const slice = self.fifo.readableSlice(0);
+                if (slice.len == 0) break;
+                try self.unbuffered_out_stream.writeAll(slice);
+                self.fifo.discard(slice.len);
+            }
+        }
+
+        pub fn outStream(self: *Self) OutStream {
+            return .{ .context = self };
+        }
+
+        pub fn write(self: *Self, bytes: []const u8) Error!usize {
+            if (bytes.len >= self.fifo.writableLength()) {
+                try self.flush();
+                return self.unbuffered_out_stream.write(bytes);
+            }
+            self.fifo.writeAssumeCapacity(bytes);
+            return bytes.len;
+        }
+    };
 }
